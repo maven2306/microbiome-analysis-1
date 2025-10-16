@@ -1,0 +1,73 @@
+---
+title: "microbiome-analysis"
+author: "Matteo Venturini"
+date: "2025-10-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Initial setup 
+
+```{r}
+library(BiocManager)
+
+# BiocManager::install("BiocFileCache")
+# BiocManager::install("remotes")
+# BiocManager::install("BiocGenerics")
+# BiocManager::install('blekhmanlab/MicroBioMap')
+# install.packages("countrycode")
+
+library(dplyr)
+library(BiocFileCache)
+library(MicroBioMap)
+library(countrycode)
+library(ggplot2)
+
+```
+
+Loading the data
+
+```{r}
+# this operation requires about 4GB of RAM
+# cpd <- getCompendium()
+# saveRDS(cpd, file = "compendium.rds")
+
+cpd <- readRDS(file = "compendium.rds")
+```
+
+
+Sample metadata 
+
+```{r}
+sample_metadata <- names(colData(cpd))
+sample_metadata
+
+sample_country <- table(colData(cpd)$country)
+sample_country
+
+```
+
+
+Filter Italy, Australia, China, India and Canada.
+
+```{r}
+countries <- c('Italy','Australia','China','India','Canada')
+cpd_sub_by_country <- cpd[, colData(cpd)$country %in% countries]
+
+```
+
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
