@@ -9,9 +9,9 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Initial setup 
+Load Packages
 
-```{r}
+```{r Load Packages}
 library(BiocManager)
 
 # BiocManager::install("BiocFileCache")
@@ -19,18 +19,20 @@ library(BiocManager)
 # BiocManager::install("BiocGenerics")
 # BiocManager::install('blekhmanlab/MicroBioMap')
 # install.packages("countrycode")
+# install.packages('forcats')
 
 library(dplyr)
 library(BiocFileCache)
 library(MicroBioMap)
 library(countrycode)
 library(ggplot2)
+library(forcats)
 
 ```
 
-Loading the data
+Load the data
 
-```{r}
+```{r Load the data}
 # this operation requires about 4GB of RAM
 # cpd <- getCompendium()
 # saveRDS(cpd, file = "compendium.rds")
@@ -41,9 +43,14 @@ cpd <- readRDS(file = "compendium.rds")
 
 Sample metadata 
 
-```{r}
+```{r Sample metadata }
 sample_metadata <- names(colData(cpd))
 sample_metadata
+
+sample_iso <- table(colData(cpd)$iso)
+sample_iso
+
+colData(cpd)$country <- countrycode(colData(cpd)$iso, "iso2c", "country.name")
 
 sample_country <- table(colData(cpd)$country)
 sample_country
@@ -53,10 +60,158 @@ sample_country
 
 Filter Italy, Australia, China, India and Canada.
 
-```{r}
+```{r Filter countries}
 countries <- c('Italy','Australia','China','India','Canada')
 cpd_sub_by_country <- cpd[, colData(cpd)$country %in% countries]
 
+```
+
+Sample data
+ 
+```{r Sample data}
+sample_data <- as.data.frame(colData(cpd_sub_by_country))
+```
+
+
+
+# Exploratory Analysis 
+
+Number of samples per country
+
+```{r Number of samples per country}
+library(forcats)
+library(ggplot2)
+ggplot(sample_data,
+    aes(x = fct_infreq(country))) +
+    geom_bar(stat='count', fill='blue', alpha=0.6) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    labs(x = "Country", y = "Number of samples") 
+```
+! (Average base count per country) --- There is actually no way to accurately know the library size.. maybe ask the professor. The data only contains total_bases, but there is no way to know the read lenght of each sample, so we can't know the number of reads. The paper does state that the median sample contains 40.830 reads.  
+
+```{r Average base count per country }
+
+# strategy <- sample_data %>%
+#   group_by(library_strategy, instrument) %>%
+#   summarise(
+#     n = n()
+#   )
+# 
+# 
+# avg_lib_size_by_country <- sample_data %>%
+#   group_by(country) %>%
+#   summarise(
+#     n = n(),
+#     avg_library_size = mean(total_bases),
+#     median_library_size = median(total_bases)
+#   )
+# 
+# ggplot(avg_lib_size_by_country, aes(x = fct_reorder(country, median_library_size, .desc = TRUE), y = median_library_size)) +
+#   geom_col() +
+#   theme_classic() +
+#   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+#   labs(
+#     title = "Average Library Size per Country",
+#     x = "Country",
+#     y = "Average Total Bases (Library Size)"
+#   ) + 
+#   scale_y_continuous(labels = scales::comma)
+  
+
+```
+
+Row data 
+
+```{r}
+sample_data_rows <- as.data.frame(rowData(cpd_sub_by_country))
+head(sample_data_rows)
+
+
+
+```
+
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(tibble)
+
+# Assume 'cpd' is your loaded TreeSummarizedExperiment object
+# cpd <- readRDS("compendium.rds")
+
+# For this example, let's create a smaller subset to make it run faster
+# Let's take Canada and Australia
+cpd_sub <- cpd[, cpd$country %in% c("Canada", "Australia")]
+
+
+# --- STEP 1: EXTRACT THE THREE PIECES OF DATA ---
+
+# 1a. Get the main data grid: the read counts
+# This is the matrix of microbes (rows) x samples (columns)
+read_counts_matrix <- assay(cpd_sub)
+
+# 1b. Get the microbe metadata (rowData)
+# This is your sample_data_rows. We get it fresh from the object.
+# We use rownames_to_column to turn the microbe names into a real column for merging.
+microbe_info <- as.data.frame(rowData(cpd_sub)) %>%
+  rownames_to_column(var = "microbe_id")
+
+# 1c. Get the sample metadata (colData)
+# This is your sample_data. We get it fresh from the object.
+# We turn the sample names (which are rownames) into a column called "sample_id".
+sample_info <- as.data.frame(colData(cpd_sub)) %>%
+  rownames_to_column(var = "sample_id")
+
+
+# --- STEP 2: RESHAPE AND COMBINE INTO ONE TIDY DATAFRAME ---
+
+# This is the key step: we convert the wide matrix of counts into a long, tidy format.
+tidy_counts <- as.data.frame(read_counts_matrix) %>%
+  rownames_to_column(var = "microbe_id") %>%
+  pivot_longer(
+    cols = -microbe_id,
+    names_to = "sample_id",
+    values_to = "read_count"
+  )
+
+# Now, we join the three tables together using their common ID columns.
+# This creates the single, powerful "master dataframe" for analysis.
+master_df <- tidy_counts %>%
+  left_join(microbe_info, by = "microbe_id") %>%
+  left_join(sample_info, by = "sample_id")
+
+
+# --- STEP 3: CALCULATE THE PROPORTIONS (USING CORRECT COLUMN NAMES) ---
+
+# With the master_df, this final step is now straightforward.
+# We use the correct, lowercase 'phylum' and 'country' column names.
+
+phylum_proportions <- master_df %>%
+  # We only need these three columns for the calculation
+  select(country, phylum, read_count) %>%
+  
+  # Group by the country, and then by the phylum within that country
+  group_by(country, phylum) %>%
+  
+  # For each group, sum up all the reads
+  summarise(phylum_total_reads = sum(as.numeric(read_count), na.rm = TRUE), .groups = 'drop') %>%
+  
+  # Now, group just by country to calculate the grand total for each country
+  group_by(country) %>%
+  
+  # Create two new columns: the country's total reads and the proportion for each phylum
+  mutate(
+    country_total_reads = sum(phylum_total_reads),
+    proportion = phylum_total_reads / country_total_reads
+  ) %>%
+  
+  # Clean up and arrange for easy viewing
+  select(country, phylum, proportion) %>%
+  arrange(country, desc(proportion))
+
+# --- VIEW THE RESULT ---
+print(phylum_proportions, n = 20)
 ```
 
 
